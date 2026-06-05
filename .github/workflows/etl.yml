@@ -1,0 +1,152 @@
+name: etl
+
+# Daily scrape: run every dataset script in R/, push their data to CKAN, recompute
+# the health board, and commit the refreshed status back. The daily commit doubles
+# as the anti-rot heartbeat - GitHub auto-disables a scheduled workflow after 60
+# days of repo inactivity, and committing keeps it alive.
+
+on:
+  schedule:
+    - cron: "15 8 * * *"    # 08:15 UTC = 09:15/10:15 Swiss time, just after the
+                            # typical morning publication window. DST-safe. Tune freely.
+  workflow_dispatch:          # manual "Run workflow" button
+
+permissions:
+  contents: write   # push refreshed status/ + README
+  issues: write     # open/close per-script failure issues
+
+concurrency:
+  group: etl
+  cancel-in-progress: false
+
+env:
+  CKAN_URL: https://ogd.cynkra.dev
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true   # Linux package binaries from P3M (no compilation)
+
+      - name: Install R dependencies
+        shell: Rscript {0}
+        run: |
+          # Base toolkit available to every dataset script. A script needing more
+          # can add packages here. Binaries from P3M -> fast, no system-dep builds.
+          install.packages(c(
+            "httr2", "curl", "jsonlite", "readr", "readxl",
+            "dplyr", "tidyr", "stringr", "tibble"
+          ))
+
+      - name: Run dataset scripts
+        env:
+          CKAN_API_KEY: ${{ secrets.CKAN_API_KEY }}
+        run: Rscript tools/run.R
+
+      - name: Render health board
+        run: Rscript tools/render.R
+
+      - name: Commit refreshed status
+        run: |
+          git config user.name  "sg-ogd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status STATUS.md README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "status: daily refresh ($(date -u +%F))"
+            git push
+          fi
+
+      # Per failing script: open (or refresh) ONE deduped issue, and auto-close any
+      # whose script is green again. Runs even when the data steps had nothing to
+      # commit, but never fails the run - an alerting hiccup must not mask a good
+      # refresh. (run.R exits 0 on a script failure, so the failure is read here
+      # from status/run.json rather than from the job status.)
+      - name: Alert on script failures
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const LABEL = 'etl-failure';
+
+            let run;
+            try { run = JSON.parse(fs.readFileSync('status/run.json', 'utf8')); }
+            catch (e) { core.warning('no status/run.json - skipping alerts'); return; }
+
+            const failed = (run.scripts || []).filter(s => s.status === 'FAILURE');
+            const failedIds = new Set(failed.map(s => s.id));
+
+            try { await github.rest.issues.createLabel({ owner, repo, name: LABEL, color: 'cf222e' }); }
+            catch (e) { /* label already exists */ }
+
+            const openIssues = (await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: LABEL, per_page: 100,
+            })).data;
+            const titleFor = id => `\u{1F534} ETL failing: ${id}`;
+            const idFromTitle = t => { const m = t.match(/ETL failing: (.+)$/); return m ? m[1] : null; };
+
+            // open or refresh one issue per failing script
+            for (const s of failed) {
+              const title = titleFor(s.id);
+              const body = [
+                `Dataset script \`R/${s.script}\` **failed** in the daily ETL run.`,
+                '', '```', (s.error || '(no error captured)').slice(0, 4000), '```',
+                '', `Run log: ${runUrl}`,
+                '', `_The script will be retried on the next run; this issue auto-closes when it succeeds again._`,
+              ].join('\n');
+              const hit = openIssues.find(i => i.title === title);
+              if (hit) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: hit.number, body });
+              } else {
+                await github.rest.issues.create({ owner, repo, title, labels: [LABEL], body });
+              }
+            }
+
+            // auto-close issues whose script recovered
+            for (const i of openIssues) {
+              const id = idFromTitle(i.title);
+              if (id && !failedIds.has(id)) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: i.number,
+                  body: `✅ Recovered — \`${id}\` succeeded in run ${runUrl}. Closing.`,
+                });
+                await github.rest.issues.update({ owner, repo, issue_number: i.number, state: 'closed' });
+              }
+            }
+
+      # Hard failure (deps won't install, runner itself crashed) => one rolling
+      # issue, so a broken pipeline can't rot silently. Per-script failures don't
+      # reach here - run.R keeps going and they're handled above.
+      - name: Open / refresh hard-failure issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The daily ETL workflow **failed** (run ${context.runId}).`,
+              '', `Run log: ${runUrl}`,
+              '', `Status was **not** refreshed this cycle. Investigate the failing step.`,
+            ].join('\n');
+            const open = (await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: 'etl-broken', per_page: 1,
+            })).data;
+            if (open.length) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open[0].number, body });
+            } else {
+              await github.rest.issues.create({
+                owner, repo, title: '\u{1F534} Daily ETL workflow is failing',
+                labels: ['etl-broken'], body,
+              });
+            }
