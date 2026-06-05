@@ -21,6 +21,12 @@ suppressPackageStartupMessages(library(httr2))
 
 ckan_base <- function() sub("/+$", "", Sys.getenv("CKAN_URL", "https://ogd.cynkra.dev"))
 
+# Dry-run mode: when SGOGD_DRYRUN=1, ckan_upload_csv() validates and prepares the
+# upload but does NOT contact CKAN. The pull-request CI uses this to run every
+# scraper (fetch + parse) WITHOUT the secret, so an untrusted PR can be checked
+# safely. No token is required in this mode.
+ckan_dryrun <- function() identical(Sys.getenv("SGOGD_DRYRUN", ""), "1")
+
 ckan_token <- function() {
   tok <- Sys.getenv("CKAN_API_KEY", "")
   if (!nzchar(tok)) {
@@ -75,6 +81,12 @@ ckan_upload_csv <- function(dataset, resource, data, format = "CSV",
   } else {
     if (!file.exists(data)) stop("ckan_upload_csv: file not found: ", data)
     data
+  }
+  if (ckan_dryrun()) {
+    n <- if (is.data.frame(data)) nrow(data) else length(readLines(path, warn = FALSE)) - 1L
+    message(sprintf("DRY RUN - would upload %d rows to %s/%s [%s]",
+                    n, dataset, resource, format))
+    return(invisible(NULL))
   }
   fields <- list(name = resource, format = format,
                  upload = curl::form_file(path))

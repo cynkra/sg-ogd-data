@@ -65,6 +65,17 @@ Run just your script in isolation while developing:
 SGOGD_ROOT=. CKAN_API_KEY=... Rscript --vanilla R/my-dataset.R
 ```
 
+## Submit a pull request (not a direct push)
+
+`main` is protected: changes land through a **pull request** with a maintainer's
+review. This is a security boundary, not bureaucracy - the daily ETL runs your
+script on `main` with the live CKAN token in its environment, so a script is
+reviewed before it can ever touch the secret. The CKAN secret is **never** exposed
+to pull-request CI: the `pr-check` workflow runs every script in dry-run mode
+(`SGOGD_DRYRUN=1`, fetch + parse, no upload, no token), so your scrape logic is
+validated safely. Outside contributors fork and PR; they get no write access and
+no secret.
+
 ## 5. Extra packages
 
 The Action installs a base toolkit (`httr2`, `curl`, `jsonlite`, `readr`,

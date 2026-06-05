@@ -1,0 +1,11 @@
+# Review gate. A code-owner approval is required before a PR can merge (enforced by
+# branch protection on main). This is the control that keeps an untrusted script
+# from reaching the CKAN secret: the secret-bearing ETL only runs on main after a
+# maintainer has reviewed and merged the change.
+#
+# New dataset scripts in R/ deliberately require maintainer review here.
+
+*                   @christophsax
+/R/                 @christophsax
+/tools/             @christophsax
+/.github/           @christophsax

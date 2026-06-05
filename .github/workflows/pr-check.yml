@@ -1,0 +1,56 @@
+name: pr-check
+
+# Validates pull requests WITHOUT the CKAN secret. Runs every dataset script in
+# dry-run mode (fetch + parse only, no upload), so an untrusted PR can be checked
+# safely - there is no secret in this workflow's environment at all, and fork PRs
+# get none either way. The secret-bearing job lives in etl.yml and only runs on
+# schedule / manual dispatch, never on a pull request.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install R dependencies
+        shell: Rscript {0}
+        run: |
+          install.packages(c(
+            "httr2", "curl", "jsonlite", "readr", "readxl",
+            "dplyr", "tidyr", "stringr", "tibble"
+          ))
+
+      - name: Dry-run every dataset script (no secret, no upload)
+        env:
+          SGOGD_DRYRUN: "1"
+        run: Rscript tools/run.R
+
+      - name: Fail if any script errored
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("status/run.json"))
+          failed = [s["id"] for s in d["scripts"] if s["status"] == "FAILURE"]
+          if failed:
+              print("Scripts failed dry-run:", ", ".join(failed))
+              for s in d["scripts"]:
+                  if s["status"] == "FAILURE":
+                      print(f"\n--- {s['id']} ---\n{s['error']}")
+              sys.exit(1)
+          print(f"All {d['n']} script(s) passed dry-run.")
+          PY
