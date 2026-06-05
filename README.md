@@ -60,18 +60,14 @@ auto-closes it when it recovers.
 
 Scripts authenticate with a CKAN API token taken from the environment:
 
-- `CKAN_API_KEY` - a CKAN API token, stored as a **GitHub Actions secret**.
+- `CKAN_API_KEY` - a **scoped, non-sysadmin** CKAN API token (the `github-ingest`
+  user, editor on the SG organisations only), stored as a **GitHub Actions
+  secret**. It grants dataset writes, not instance administration, so a leak
+  cannot compromise CKAN. The secret never appears in this repo or its logs.
 - `CKAN_URL` - the instance, defaults to `https://ogd.cynkra.dev`.
 
-Mint a token on the CKAN server and register it as the repo secret:
-
-```bash
-# on the CKAN host:
-ssh hetzner-shinyproxy \
-  "cd /opt/ckan && docker compose exec ckan ckan user token add admin gh-actions-sg-ogd-data"
-# then, with the printed token:
-gh secret set CKAN_API_KEY --repo cynkra/sg-ogd-data --body "<token>"
-```
+Maintainers mint and rotate this token on the CKAN host; the procedure lives in
+cynkra's internal ops notes, not in this public repo.
 
 ## Run it locally
 
