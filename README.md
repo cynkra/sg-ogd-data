@@ -10,7 +10,7 @@ GitHub Action runs them all and tracks which ones succeeded.
 It is **not** an R package - `R/` is a folder of standalone scrape scripts. The
 repo stores the *health history*, not the data; the data lives in CKAN.
 
-## Add a dataset (the only thing you do)
+## Add a dataset
 
 Drop one self-contained script into `R/`, named after its dataset:
 
