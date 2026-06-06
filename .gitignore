@@ -4,3 +4,7 @@
 .RData
 .Renviron
 *.csv.tmp
+
+# generated health board - lives on the unprotected `status` branch, not main
+status/
+STATUS.md

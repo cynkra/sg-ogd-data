@@ -158,29 +158,11 @@ writeLines(toJSON(list(
   color = if (all_green) "brightgreen" else if (!length(ids)) "lightgrey" else "red"),
   auto_unbox = TRUE), file.path(ST, "badge.json"))
 
-# --- README.md : the <!-- HEALTH --> block ----------------------------------
-block <- c(
-  "<!-- HEALTH:START -->",
-  sprintf("**ETL status** (run %s): %s %d of %d script(s) green.",
-          today, if (all_green) "\U0001F7E2" else "\U0001F534",
-          sum(stat == "SUCCESS"), length(ids)),
-  "",
-  "![ETL uptime](status/health.svg)",
-  "",
-  "See [STATUS.md](STATUS.md) for the per-script board.",
-  "<!-- HEALTH:END -->")
-rp <- "README.md"
-if (file.exists(rp)) {
-  r <- readLines(rp, warn = FALSE)
-  s <- grep("<!-- HEALTH:START -->", r, fixed = TRUE)
-  e <- grep("<!-- HEALTH:END -->", r, fixed = TRUE)
-  if (length(s) && length(e)) {
-    r <- c(r[seq_len(s - 1L)], block, if (e < length(r)) r[(e + 1L):length(r)])
-  } else {
-    r <- c(r, "", "## Health", "", block)
-  }
-  writeLines(r, rp)
-}
+# NB: README.md is NOT rewritten here. The health board is published to the
+# unprotected `status` branch (the bot cannot push to protected `main`), and the
+# README on `main` embeds status/health.svg + status/badge.json from that branch
+# via static raw URLs. So this script only writes the artifacts under status/ + the
+# per-script STATUS.md, which the workflow's publish step pushes to `status`.
 
-cat(sprintf("render: %d ok / %d failed, %d script(s) -> health.svg, STATUS.md, README\n",
+cat(sprintf("render: %d ok / %d failed, %d script(s) -> status/health.svg, STATUS.md, badge.json\n",
             sum(stat == "SUCCESS"), length(fail_ids), length(ids)))

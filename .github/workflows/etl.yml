@@ -48,19 +48,42 @@ jobs:
           CKAN_API_KEY: ${{ secrets.CKAN_API_KEY }}
         run: Rscript tools/run.R
 
+      # Pull the running history off the status branch so render.R can append to it
+      # (main carries no status/ - it's a build artifact that lives only on status).
+      - name: Seed prior health history from the status branch
+        run: |
+          mkdir -p status
+          git fetch origin status || true
+          git show origin/status:history.csv        > status/history.csv        2>/dev/null || true
+          git show origin/status:script-history.csv > status/script-history.csv 2>/dev/null || true
+
       - name: Render health board
         run: Rscript tools/render.R
 
-      - name: Commit refreshed status
+      # Publish the board to the unprotected `status` branch. main requires a
+      # reviewed PR, so the bot cannot push there; status holds only generated data
+      # (no code that runs with the secret), so it is safe to leave unprotected.
+      - name: Publish health board to the status branch
         run: |
           git config user.name  "sg-ogd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add status STATUS.md README.md
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
+          git fetch origin status || true
+          if git rev-parse --verify --quiet refs/remotes/origin/status >/dev/null; then
+            git worktree add /tmp/status-wt origin/status
+            git -C /tmp/status-wt switch -C status
           else
-            git commit -m "status: daily refresh ($(date -u +%F))"
-            git push
+            git worktree add --detach /tmp/status-wt HEAD
+            git -C /tmp/status-wt switch --orphan status
+            git -C /tmp/status-wt rm -rf . >/dev/null 2>&1 || true
+          fi
+          rsync -a --delete --exclude='.git' status/ /tmp/status-wt/
+          cp STATUS.md /tmp/status-wt/STATUS.md
+          git -C /tmp/status-wt add -A
+          if git -C /tmp/status-wt diff --cached --quiet; then
+            echo "No status changes."
+          else
+            git -C /tmp/status-wt commit -m "status: daily refresh ($(date -u +%F))"
+            git -C /tmp/status-wt push origin status
           fi
 
       # Per failing script: open (or refresh) ONE deduped issue, and auto-close any
@@ -122,6 +145,26 @@ jobs:
                 });
                 await github.rest.issues.update({ owner, repo, issue_number: i.number, state: 'closed' });
               }
+            }
+
+      # Clean run => close any open hard-failure issue (the workflow recovered).
+      - name: Close hard-failure issue on recovery
+        if: success()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const open = (await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: 'etl-broken', per_page: 100,
+            })).data;
+            for (const i of open) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: i.number,
+                body: `✅ Recovered — the workflow completed successfully in run ${runUrl}. Closing.`,
+              });
+              await github.rest.issues.update({ owner, repo, issue_number: i.number, state: 'closed' });
             }
 
       # Hard failure (deps won't install, runner itself crashed) => one rolling
