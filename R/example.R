@@ -1,37 +1,40 @@
-# Example dataset script - safe to delete once you have real ones.
+# Example dataset script - the simplest real one: a heartbeat.
 #
-# Shows the contract every script in R/ follows: fetch -> (tidy) -> push to CKAN.
-# This one builds a tiny synthetic table so it always runs green, demonstrating the
-# framework without depending on a live website. For a real internet-scrape
-# starting point, copy docs/TEMPLATE.R instead.
+# Every run it posts a one-row CSV holding the timestamp of this update to CKAN,
+# so you can see the daily ETL is alive and actually writing. Copy docs/TEMPLATE.R
+# for a real internet-scrape; this one needs no external source.
 #
-# The runner gives this script CKAN_URL, CKAN_API_KEY and SGOGD_ROOT in its
-# environment. On success it exits 0; on any error it should stop() (non-zero
-# exit), which the runner records as FAILURE and the daily Action turns into a
-# GitHub issue.
+# Contract: the runner gives this script CKAN_URL, CKAN_API_KEY and SGOGD_ROOT.
+# Finishing normally = SUCCESS; any error (e.g. a missing token) = FAILURE, which
+# the daily Action turns into a GitHub issue. In dry-run mode (SGOGD_DRYRUN=1, used
+# by the PR check) the CKAN calls are no-ops, so it stays green without a secret.
 
 source(file.path(Sys.getenv("SGOGD_ROOT", "."), "tools", "ckan.R"))
 
-# --- fetch (here: synthesize; normally an httr2 / readr call to a source URL) ---
+ORG     <- "kanton-st-gallen"          # SG playground org (token is editor here)
+DATASET <- "sg-ogd-data-example"
+
 df <- data.frame(
-  date  = format(Sys.Date() - 6:0),
-  value = round(seq(10, 20, length.out = 7), 1)
+  updated_utc      = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+  updated_local_ch = format(Sys.time(), "%Y-%m-%d %H:%M:%S",  tz = "Europe/Zurich"),
+  source           = "https://github.com/cynkra/sg-ogd-data",
+  note             = "Automatischer Heartbeat des sg-ogd-data ETL"
 )
 
-# --- push to CKAN ------------------------------------------------------------
-# Guarded so the example stays green out of the box: it only uploads when a key is
-# present AND SGOGD_EXAMPLE_UPLOAD=1 (the example's target dataset need not exist
-# otherwise). Real scripts drop the guard and just call ckan_upload_csv().
-upload <- nzchar(Sys.getenv("CKAN_API_KEY", "")) &&
-          identical(Sys.getenv("SGOGD_EXAMPLE_UPLOAD", ""), "1")
+ckan_ensure_dataset(
+  DATASET,
+  title     = "sg-ogd-data – Beispiel (letzte Aktualisierung)",
+  owner_org = ORG,
+  notes     = paste("Automatischer Beispiel-Datensatz des sg-ogd-data ETL.",
+                    "Enthaelt den Zeitpunkt der letzten Aktualisierung.")
+)
 
-if (upload) {
-  ckan_upload_csv(dataset = "sg-ogd-data-example",
-                  resource = "Example measurements",
-                  data = df,
-                  description = "Demo resource written by sg-ogd-data R/example.R.")
-  cat(sprintf("uploaded %d rows to %s\n", nrow(df), ckan_base()))
-} else {
-  cat(sprintf("DRY RUN - fetched %d rows, upload skipped (no key / SGOGD_EXAMPLE_UPLOAD != 1)\n",
-              nrow(df)))
-}
+invisible(ckan_upload_csv(
+  dataset     = DATASET,
+  resource    = "Letzte Aktualisierung",
+  data        = df,
+  description = "Zeitstempel des letzten automatischen ETL-Laufs (UTC und Lokalzeit)."
+))
+
+cat(sprintf("posted heartbeat %s to %s/dataset/%s\n",
+            df$updated_utc, ckan_base(), DATASET))

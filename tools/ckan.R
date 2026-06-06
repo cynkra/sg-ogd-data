@@ -66,6 +66,20 @@ ckan_find_resource <- function(dataset, resource) {
   NULL
 }
 
+# Ensure a dataset (CKAN "package") exists, creating it in `owner_org` if missing.
+# Returns invisibly. A no-op in dry-run mode. Lets a script be self-contained: it
+# declares the dataset it writes to and creates it on first run. The token's user
+# must be an editor of `owner_org`.
+ckan_ensure_dataset <- function(name, title, owner_org, notes = NULL) {
+  if (ckan_dryrun()) return(invisible(NULL))
+  existing <- tryCatch(ckan_action("package_show", body = list(id = name)),
+                       error = function(e) NULL)
+  if (!is.null(existing)) return(invisible(existing))
+  body <- list(name = name, title = title, owner_org = owner_org)
+  if (!is.null(notes)) body$notes <- notes
+  invisible(ckan_action("package_create", body = body))
+}
+
 # Upload a CSV to CKAN as a named resource on an existing dataset. Find-or-update
 # by resource name: creates the resource the first time, patches the file on every
 # later run (so the dataset keeps one stable, refreshed resource rather than piling
