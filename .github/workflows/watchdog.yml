@@ -1,0 +1,37 @@
+name: watchdog
+
+# Independent dead-man's-switch for the daily ETL (.github/workflows/etl.yml). The
+# ETL's own inline alarm only fires on success()/failure(); a run cancelled by
+# `timeout-minutes`, or one that never gets scheduled at all (GitHub auto-disables a
+# scheduled workflow after 60 days of repo inactivity), slips through. This runs ~2h
+# later on its OWN schedule and checks the one thing that matters: did the status
+# branch gain a history row for today? If not, it opens a deduped `watchdog` issue
+# (and closes it once a fresh row lands). See .github/scripts/watchdog.sh.
+
+on:
+  schedule:
+    - cron: "15 10 * * *"   # ~2h after the etl cron (15 8 * * *); a healthy run has
+                            # published today's history row by then (etl takes ~1 min).
+  workflow_dispatch:          # manual "Run workflow" button
+
+permissions:
+  contents: read   # read history.csv off the status branch
+  issues: write    # open / close the watchdog issue
+  actions: read    # query the latest etl run for context
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check status freshness & alert
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/watchdog.sh
