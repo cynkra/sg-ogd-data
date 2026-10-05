@@ -1,5 +1,5 @@
 {
-  "ts": "2026-10-04T10:20:36Z",
+  "ts": "2026-10-05T08:48:02Z",
   "n": 1,
   "ok": 1,
   "failed": 0,
@@ -8,7 +8,7 @@
       "script": "example.R",
       "id": "example",
       "status": "SUCCESS",
-      "duration_s": 2,
+      "duration_s": 2.1,
       "error": ""
     }
   ]
